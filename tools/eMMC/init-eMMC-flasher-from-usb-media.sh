@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright (c) 2013-2015 Robert Nelson <robertcnelson@gmail.com>
+# Copyright (c) 2013-2016 Robert Nelson <robertcnelson@gmail.com>
 # Portions copyright (c) 2014 Charles Steinkuehler <charles@steinkuehler.net>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -21,76 +21,21 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+source $(dirname "$0")/functions.sh
+
 #This script assumes, these packages are installed, as network may not be setup
 #dosfstools initramfs-tools rsync u-boot-tools
 
-version_message="1.004: 2015-07-31: we want to use this on the x15 too.."
+version_message="1.20161013: oemflasher improvements..."
 
-#WARNING make sure to run this with an initrd...
-#lsmod:
-#Module                  Size  Used by
-#uas                    14300  0 
-#usb_storage            53318  1 uas
+check_if_run_as_root
 
-if ! id | grep -q root; then
-	echo "must be run as root"
-	exit
-fi
-
-unset root_drive
-root_drive="$(cat /proc/cmdline | sed 's/ /\n/g' | grep root=UUID= | awk -F 'root=' '{print $2}' || true)"
-if [ ! "x${root_drive}" = "x" ] ; then
-	root_drive="$(/sbin/findfs ${root_drive} || true)"
-else
-	root_drive="$(cat /proc/cmdline | sed 's/ /\n/g' | grep root= | awk -F 'root=' '{print $2}' || true)"
-fi
+find_root_drive
 
 mount -t tmpfs tmpfs /tmp
 
 destination="/dev/mmcblk1"
 usb_drive="/dev/sda"
-
-flush_cache () {
-	sync
-	blockdev --flushbufs ${destination}
-}
-
-broadcast () {
-	if [ "x${message}" != "x" ] ; then
-		echo "${message}"
-		echo "${message}" > /dev/tty0 || true
-	fi
-}
-
-inf_loop () {
-	while read MAGIC ; do
-		case $MAGIC in
-		beagleboard.org)
-			echo "Your foo is strong!"
-			bash -i
-			;;
-		*)	echo "Your foo is weak."
-			;;
-		esac
-	done
-}
-
-# umount does not like device names without a valid /etc/mtab
-# find the mount point from /proc/mounts
-dev2dir () {
-	grep -m 1 '^$1 ' /proc/mounts | while read LINE ; do set -- $LINE ; echo $2 ; done
-}
-
-get_device () {
-	is_bbb="enable"
-	machine=$(cat /proc/device-tree/model | sed "s/ /_/g")
-
-	case "${machine}" in
-	TI_AM5728_BeagleBoard-X15)
-		unset is_bbb
-		;;
-	esac
-}
 
 write_failure () {
 	message="writing to [${destination}] failed..." ; broadcast
@@ -112,7 +57,6 @@ write_failure () {
 
 print_eeprom () {
 	unset got_eeprom
-
 	#v8 of nvmem...
 	if [ -f /sys/bus/nvmem/devices/at24-0/nvmem ] && [ "x${got_eeprom}" = "x" ] ; then
 		eeprom="/sys/bus/nvmem/devices/at24-0/nvmem"
@@ -127,10 +71,16 @@ print_eeprom () {
 		got_eeprom="true"
 	fi
 
-	#eeprom...
+	#eeprom 3.8.x & 4.4 with eeprom-nvmem patchset...
 	if [ -f /sys/bus/i2c/devices/0-0050/eeprom ] && [ "x${got_eeprom}" = "x" ] ; then
 		eeprom="/sys/bus/i2c/devices/0-0050/eeprom"
-		eeprom_location=$(ls /sys/devices/ocp*/44e0b000.i2c/i2c-0/0-0050/eeprom 2> /dev/null)
+
+		if [ -f /sys/devices/platform/ocp/44e0b000.i2c/i2c-0/0-0050/eeprom ] ; then
+			eeprom_location="/sys/devices/platform/ocp/44e0b000.i2c/i2c-0/0-0050/eeprom"
+		else
+			eeprom_location=$(ls /sys/devices/ocp*/44e0b000.i2c/i2c-0/0-0050/eeprom 2> /dev/null)
+		fi
+
 		got_eeprom="true"
 	fi
 
@@ -142,25 +92,55 @@ print_eeprom () {
 }
 
 flash_emmc () {
+	message="eMMC: prepareing ${destination}" ; broadcast
+	flush_cache
+	dd if=/dev/zero of=${destination} bs=1M count=108
+	sync
+	dd if=${destination} of=/dev/null bs=1M count=108
+	sync
+	flush_cache
+
+	LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination} <<-__EOF__
+	4,,L,*
+	__EOF__
+
+	sync
+	flush_cache
+
+	message="mkfs.ext4 -L rootfs ${destination}p1" ; broadcast
+	LC_ALL=C mkfs.ext4 -L rootfs ${destination}p1 || write_failure
+	message="Erasing: ${destination} complete" ; broadcast
+	message="-----------------------------" ; broadcast
+
 	if [ ! "x${conf_bmap}" = "x" ] ; then
-		if [ -f /usr/bin/bmaptool ] && [ -f /tmp/usb/${conf_bmap} ] ; then
+		if [ -f /usr/bin/bmaptool ] && [ -f ${wdir}/${conf_bmap} ] ; then
 			message="Flashing eMMC with bmaptool" ; broadcast
 			message="-----------------------------" ; broadcast
-			message="bmaptool copy --bmap /tmp/usb/${conf_bmap} /tmp/usb/${conf_image} ${destination}" ; broadcast
-			/usr/bin/bmaptool copy --bmap /tmp/usb/${conf_bmap} /tmp/usb/${conf_image} ${destination} || write_failure
+			message="bmaptool copy --bmap ${wdir}/${conf_bmap} ${wdir}/${conf_image} ${destination}" ; broadcast
+			/usr/bin/bmaptool copy --bmap ${wdir}/${conf_bmap} ${wdir}/${conf_image} ${destination} || write_failure
 			message="-----------------------------" ; broadcast
 		else
 			message="Flashing eMMC with dd" ; broadcast
 			message="-----------------------------" ; broadcast
-			message="xzcat /tmp/usb/${conf_image} | dd of=${destination} bs=1M" ; broadcast
-			xzcat /tmp/usb/${conf_image} | dd of=${destination} bs=1M || write_failure
+			if [ "x${image_is_uncompressed}" = "xenable" ] ; then
+				message="dd if=${wdir}/${conf_image} of=${destination} bs=1M" ; broadcast
+				dd if=${wdir}/${conf_image} of=${destination} bs=1M || write_failure
+			else
+				message="xzcat ${wdir}/${conf_image} | dd of=${destination} bs=1M" ; broadcast
+				xzcat ${wdir}/${conf_image} | dd of=${destination} bs=1M || write_failure
+			fi
 			message="-----------------------------" ; broadcast
 		fi
 	else
 		message="Flashing eMMC with dd" ; broadcast
 		message="-----------------------------" ; broadcast
-		message="xzcat /tmp/usb/${conf_image} | dd of=${destination} bs=1M" ; broadcast
-		xzcat /tmp/usb/${conf_image} | dd of=${destination} bs=1M || write_failure
+			if [ "x${image_is_uncompressed}" = "xenable" ] ; then
+				message="dd if=${wdir}/${conf_image} of=${destination} bs=1M" ; broadcast
+				dd if=${wdir}/${conf_image} of=${destination} bs=1M || write_failure
+			else
+				message="xzcat ${wdir}/${conf_image} | dd of=${destination} bs=1M" ; broadcast
+				xzcat ${wdir}/${conf_image} | dd of=${destination} bs=1M || write_failure
+			fi
 		message="-----------------------------" ; broadcast
 	fi
 	flush_cache
@@ -205,18 +185,21 @@ auto_fsck () {
 }
 
 quad_partition () {
+	conf_partition2_startmb=$(($conf_partition1_startmb + $conf_partition1_endmb))
+	conf_partition3_startmb=$(($conf_partition2_startmb + $conf_partition2_endmb))
+	conf_partition4_startmb=$(($conf_partition3_startmb + $conf_partition3_endmb))
 	message="LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination}" ; broadcast
 	message="${conf_partition1_startmb},${conf_partition1_endmb},${conf_partition1_fstype},*" ; broadcast
-	message=",${conf_partition2_endmb},${conf_partition2_fstype},-" ; broadcast
-	message=",${conf_partition3_endmb},${conf_partition3_fstype},-" ; broadcast
-	message=",,${conf_partition4_fstype},-" ; broadcast
+	message="${conf_partition2_startmb},${conf_partition2_endmb},${conf_partition2_fstype},-" ; broadcast
+	message="${conf_partition3_startmb},${conf_partition3_endmb},${conf_partition3_fstype},-" ; broadcast
+	message="${conf_partition4_startmb},,${conf_partition4_fstype},-" ; broadcast
 	message="-----------------------------" ; broadcast
 
 	LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination} <<-__EOF__
 		${conf_partition1_startmb},${conf_partition1_endmb},${conf_partition1_fstype},*
-		,${conf_partition2_endmb},${conf_partition2_fstype},-
-		,${conf_partition3_endmb},${conf_partition3_fstype},-
-		,,${conf_partition4_fstype},-
+		${conf_partition2_startmb},${conf_partition2_endmb},${conf_partition2_fstype},-
+		${conf_partition3_startmb},${conf_partition3_endmb},${conf_partition3_fstype},-
+		${conf_partition4_startmb},,${conf_partition4_fstype},-
 	__EOF__
 
 	auto_fsck
@@ -226,16 +209,18 @@ quad_partition () {
 }
 
 tri_partition () {
+	conf_partition2_startmb=$(($conf_partition1_startmb + $conf_partition1_endmb))
+	conf_partition3_startmb=$(($conf_partition2_startmb + $conf_partition2_endmb))
 	message="LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination}" ; broadcast
 	message="${conf_partition1_startmb},${conf_partition1_endmb},${conf_partition1_fstype},*" ; broadcast
-	message=",${conf_partition2_endmb},${conf_partition2_fstype},-" ; broadcast
-	message=",,${conf_partition3_fstype},-" ; broadcast
+	message="${conf_partition2_startmb},${conf_partition2_endmb},${conf_partition2_fstype},-" ; broadcast
+	message="${conf_partition3_startmb},,${conf_partition3_fstype},-" ; broadcast
 	message="-----------------------------" ; broadcast
 
 	LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination} <<-__EOF__
 		${conf_partition1_startmb},${conf_partition1_endmb},${conf_partition1_fstype},*
-		,${conf_partition2_endmb},${conf_partition2_fstype},-
-		,,${conf_partition3_fstype},-
+		${conf_partition2_startmb},${conf_partition2_endmb},${conf_partition2_fstype},-
+		${conf_partition3_startmb},,${conf_partition3_fstype},-
 	__EOF__
 
 	auto_fsck
@@ -245,14 +230,15 @@ tri_partition () {
 }
 
 dual_partition () {
+	conf_partition2_startmb=$(($conf_partition1_startmb + $conf_partition1_endmb))
 	message="LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination}" ; broadcast
 	message="${conf_partition1_startmb},${conf_partition1_endmb},${conf_partition1_fstype},*" ; broadcast
-	message=",,${conf_partition2_fstype},-" ; broadcast
+	message="${conf_partition2_startmb},,${conf_partition2_fstype},-" ; broadcast
 	message="-----------------------------" ; broadcast
 
 	LC_ALL=C sfdisk --force --no-reread --in-order --Linux --unit M ${destination} <<-__EOF__
 		${conf_partition1_startmb},${conf_partition1_endmb},${conf_partition1_fstype},*
-		,,${conf_partition2_fstype},-
+		${conf_partition2_startmb},,${conf_partition2_fstype},-
 	__EOF__
 
 	auto_fsck
@@ -376,7 +362,6 @@ set_uuid () {
 
 check_eeprom () {
 	unset got_eeprom
-
 	#v8 of nvmem...
 	if [ -f /sys/bus/nvmem/devices/at24-0/nvmem ] && [ "x${got_eeprom}" = "x" ] ; then
 		eeprom="/sys/bus/nvmem/devices/at24-0/nvmem"
@@ -391,10 +376,16 @@ check_eeprom () {
 		got_eeprom="true"
 	fi
 
-	#eeprom...
+	#eeprom 3.8.x & 4.4 with eeprom-nvmem patchset...
 	if [ -f /sys/bus/i2c/devices/0-0050/eeprom ] && [ "x${got_eeprom}" = "x" ] ; then
 		eeprom="/sys/bus/i2c/devices/0-0050/eeprom"
-		eeprom_location=$(ls /sys/devices/ocp*/44e0b000.i2c/i2c-0/0-0050/eeprom 2> /dev/null)
+
+		if [ -f /sys/devices/platform/ocp/44e0b000.i2c/i2c-0/0-0050/eeprom ] ; then
+			eeprom_location="/sys/devices/platform/ocp/44e0b000.i2c/i2c-0/0-0050/eeprom"
+		else
+			eeprom_location=$(ls /sys/devices/ocp*/44e0b000.i2c/i2c-0/0-0050/eeprom 2> /dev/null)
+		fi
+
 		got_eeprom="true"
 	fi
 
@@ -406,73 +397,29 @@ check_eeprom () {
 				message="-----------------------------" ; broadcast
 			else
 				message="Invalid EEPROM header detected" ; broadcast
-				if [ ! "x${eeprom_location}" = "x" ] ; then
-					message="Writing header to EEPROM" ; broadcast
-					dd if=/tmp/usb/${conf_eeprom_file} of=${eeprom_location} || write_failure
-					sync
-					sync
-					eeprom_check=$(hexdump -e '8/1 "%c"' ${eeprom} -n 8 | cut -b 6-8)
-					echo "eeprom check: [${eeprom_check}]"
+				if [ -f ${wdir}/${conf_eeprom_file} ] ; then
+					if [ ! "x${eeprom_location}" = "x" ] ; then
+						message="Writing header to EEPROM" ; broadcast
+						dd if=${wdir}/${conf_eeprom_file} of=${eeprom_location} || write_failure
+						sync
+						sync
+						eeprom_check=$(hexdump -e '8/1 "%c"' ${eeprom} -n 8 | cut -b 6-8)
+						echo "eeprom check: [${eeprom_check}]"
 
-					#We have to reboot, as the kernel only loads the eMMC cape
-					# with a valid header
-					reboot -f
+						#We have to reboot, as the kernel only loads the eMMC cape
+						# with a valid header
+						reboot -f
 
-					#We shouldnt hit this...
-					exit
+						#We shouldnt hit this...
+						exit
+					fi
+				else
+					message="error: no [${wdir}/${conf_eeprom_file}]" ; broadcast
 				fi
 			fi
 		fi
 	fi
 }
-
-cylon_leds () {
-	if [ "x${is_bbb}" = "xenable" ] ; then
-		if [ -e /sys/class/leds/beaglebone\:green\:usr0/trigger ] ; then
-			BASE=/sys/class/leds/beaglebone\:green\:usr
-			echo none > ${BASE}0/trigger
-			echo none > ${BASE}1/trigger
-			echo none > ${BASE}2/trigger
-			echo none > ${BASE}3/trigger
-
-			STATE=1
-			while : ; do
-				case $STATE in
-				1)	echo 255 > ${BASE}0/brightness
-					echo 0   > ${BASE}1/brightness
-					STATE=2
-					;;
-				2)	echo 255 > ${BASE}1/brightness
-					echo 0   > ${BASE}0/brightness
-					STATE=3
-					;;
-				3)	echo 255 > ${BASE}2/brightness
-					echo 0   > ${BASE}1/brightness
-					STATE=4
-					;;
-				4)	echo 255 > ${BASE}3/brightness
-					echo 0   > ${BASE}2/brightness
-					STATE=5
-					;;
-				5)	echo 255 > ${BASE}2/brightness
-					echo 0   > ${BASE}3/brightness
-					STATE=6
-					;;
-				6)	echo 255 > ${BASE}1/brightness
-					echo 0   > ${BASE}2/brightness
-					STATE=1
-					;;
-				*)	echo 255 > ${BASE}0/brightness
-					echo 0   > ${BASE}1/brightness
-					STATE=2
-					;;
-				esac
-				sleep 0.1
-			done
-		fi
-	fi
-}
-
 
 process_job_file () {
 	job_file=found
@@ -492,14 +439,24 @@ process_job_file () {
 		conf_eeprom_file=$(cat ${wfile} | grep -v '#' | grep conf_eeprom_file | awk -F '=' '{print $2}' || true)
 		conf_eeprom_compare=$(cat ${wfile} | grep -v '#' | grep conf_eeprom_compare | awk -F '=' '{print $2}' || true)
 		if [ ! "x${conf_eeprom_file}" = "x" ] ; then
-			if [ -f /tmp/usb/${conf_eeprom_file} ] ; then
+			if [ -f ${wdir}/${conf_eeprom_file} ] ; then
 				check_eeprom
 			fi
 		fi
 
 		conf_image=$(cat ${wfile} | grep -v '#' | grep conf_image | awk -F '=' '{print $2}' || true)
+		#check if it was pre-un-compressed:
+		unset image_is_uncompressed
+		if [ ! -f ${wdir}/${conf_image} ] ; then
+			test_image=$(echo ${conf_image} | awk -F '.xz' '{ print $1 }')
+			if [ -f ${wdir}/${test_image} ] ; then
+				conf_image=${test_image}
+				image_is_uncompressed="enable"
+			fi
+		fi
+
 		if [ ! "x${conf_image}" = "x" ] ; then
-			if [ -f /tmp/usb/${conf_image} ] ; then
+			if [ -f ${wdir}/${conf_image} ] ; then
 				conf_bmap=$(cat ${wfile} | grep -v '#' | grep conf_bmap | awk -F '=' '{print $2}' || true)
 				if [ "x${is_bbb}" = "xenable" ] ; then
 					cylon_leds & CYLON_PID=$!
@@ -520,7 +477,7 @@ process_job_file () {
 					[ -e /proc/$CYLON_PID ]  && kill $CYLON_PID
 				fi
 			else
-				message="error: image not found [/tmp/usb/${conf_image}]" ; broadcast
+				message="error: image not found [${wdir}/${conf_image}]" ; broadcast
 			fi
 		else
 			message="error: image not defined [conf_image=${conf_image}]" ; broadcast
@@ -534,6 +491,7 @@ process_job_file () {
 
 check_usb_media () {
 	wfile="/tmp/usb/job.txt"
+	wdir="/tmp/usb"
 	message="Checking external usb media" ; broadcast
 	message="lsblk:" ; broadcast
 	message="`lsblk || true`" ; broadcast
@@ -571,31 +529,37 @@ check_usb_media () {
 	done
 
 	if [ ! "x${job_file}" = "xfound" ] ; then
-		message="job.txt: format" ; broadcast
-		message="-----------------------------" ; broadcast
-		message="abi=aaa" ; broadcast
-		message="conf_eeprom_file=<file>" ; broadcast
-		message="conf_eeprom_compare=<6-8>" ; broadcast
-		message="conf_image=<file>.img.xz" ; broadcast
-		message="conf_bmap=<file>.bmap" ; broadcast
-		message="conf_resize=enable|<blank>" ; broadcast
-		message="conf_partition1_startmb=1" ; broadcast
-		message="conf_partition1_fstype=" ; broadcast
+		if [ -f /opt/emmc/job.txt ] ; then
+			wfile="/opt/emmc/job.txt"
+			wdir="/opt/emmc"
+			process_job_file
+		else
+			message="job.txt: format" ; broadcast
+			message="-----------------------------" ; broadcast
+			message="abi=aaa" ; broadcast
+			message="conf_eeprom_file=<file>" ; broadcast
+			message="conf_eeprom_compare=<6-8>" ; broadcast
+			message="conf_image=<file>.img.xz" ; broadcast
+			message="conf_bmap=<file>.bmap" ; broadcast
+			message="conf_resize=enable|<blank>" ; broadcast
+			message="conf_partition1_startmb=1" ; broadcast
+			message="conf_partition1_fstype=" ; broadcast
 
-		message="#last endmb is ignored as it just uses the rest of the drive..." ; broadcast
-		message="conf_partition1_endmb=" ; broadcast
+			message="#last endmb is ignored as it just uses the rest of the drive..." ; broadcast
+			message="conf_partition1_endmb=" ; broadcast
 
-		message="conf_partition2_fstype=" ; broadcast
-		message="conf_partition2_endmb=" ; broadcast
+			message="conf_partition2_fstype=" ; broadcast
+			message="conf_partition2_endmb=" ; broadcast
 
-		message="conf_partition3_fstype=" ; broadcast
-		message="conf_partition3_endmb=" ; broadcast
+			message="conf_partition3_fstype=" ; broadcast
+			message="conf_partition3_endmb=" ; broadcast
 
-		message="conf_partition4_fstype=" ; broadcast
+			message="conf_partition4_fstype=" ; broadcast
 
-		message="conf_root_partition=1|2|3|4" ; broadcast
-		message="-----------------------------" ; broadcast
-		write_failure
+			message="conf_root_partition=1|2|3|4" ; broadcast
+			message="-----------------------------" ; broadcast
+			write_failure
+		fi
 	fi
 
 	message="eMMC has been flashed: please wait for device to power down." ; broadcast

@@ -5,15 +5,24 @@
 unset are_we_flasher
 are_we_flasher=$(grep init-eMMC-flasher /proc/cmdline || true)
 if [ ! "x${are_we_flasher}" = "x" ] ; then
-	halt
+	systemctl poweroff || halt
 	exit
 fi
 
 #Regenerate ssh host keys
 if [ -f /etc/ssh/ssh.regenerate ] ; then
-	echo "generic-board-startup: regnerating ssh keys"
+	echo "generic-board-startup: regenerating ssh keys"
 	systemctl stop sshd
 	rm -rf /etc/ssh/ssh_host_* || true
+
+	if [ -e /dev/hwrng ] ; then
+		# Mix in the output of the HWRNG to the kernel before generating ssh keys
+		dd if=/dev/hwrng of=/dev/urandom count=1 bs=4096 2>/dev/null
+		echo "generic-board-startup: if=/dev/hwrng of=/dev/urandom count=1 bs=4096"
+	else
+		echo "generic-board-startup: WARNING /dev/hwrng wasn't available"
+	fi
+
 	dpkg-reconfigure openssh-server
 	sync
 	if [ -s /etc/ssh/ssh_host_ed25519_key.pub ] ; then
@@ -43,13 +52,13 @@ if [ -f /proc/device-tree/model ] ; then
 	echo "generic-board-startup: [model=${board}]"
 
 	case "${board}" in
-	TI_AM335x_BeagleBone|TI_AM335x_BeagleBone_Black|TI_AM335x_BeagleBone_Green|TI_AM335x_Arduino_Tre)
+	TI_AM335x_Beagle*|TI_AM335x_Arduino_Tre|Arrow_BeagleBone_Black_Industrial|SanCloud_BeagleBone_Enhanced)
 		script="am335x_evm.sh"
 		;;
 	TI_AM5728_BeagleBoard-X15)
 		script="beagle_x15.sh"
 		;;
-	TI_OMAP3_BeagleBoard|TI_OMAP3_BeagleBoard_xM)
+	TI_OMAP3_Beagle*)
 		script="omap3_beagle.sh"
 		;;
 	TI_OMAP5_uEVM_board)

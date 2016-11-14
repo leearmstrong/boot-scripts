@@ -1,6 +1,6 @@
 #!/bin/sh -e
 #
-# Copyright (c) 2014-2015 Robert Nelson <robertcnelson@gmail.com>
+# Copyright (c) 2014-2016 Robert Nelson <robertcnelson@gmail.com>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -25,12 +25,35 @@ if ! id | grep -q root; then
 	exit
 fi
 
+test_ti_kernel_version () {
+	if [ "x${kernel}" = "x" ] ; then
+		major=$(uname -r | awk '{print $1}' | cut -d. -f1)
+		minor=$(uname -r | awk '{print $1}' | cut -d. -f2)
+
+		case "${major}.${minor}" in
+		3.14)
+			kernel="LTS314"
+			;;
+		4.1)
+			kernel="LTS41"
+			;;
+		4.4)
+			kernel="LTS44"
+			;;
+		4.9)
+			kernel="LTS49"
+			;;
+		esac
+	fi
+}
+
 scan_ti_kernels () {
 	if [ "x${SOC}" = "x" ] ; then
 		unset testvalue
 		testvalue=$(echo ${current_kernel} | grep ti-xenomai || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="ti-xenomai"
+			test_ti_kernel_version
 		fi
 	fi
 
@@ -39,6 +62,7 @@ scan_ti_kernels () {
 		testvalue=$(echo ${current_kernel} | grep ti-rt || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="ti-rt"
+			test_ti_kernel_version
 		fi
 	fi
 
@@ -47,7 +71,55 @@ scan_ti_kernels () {
 		testvalue=$(echo ${current_kernel} | grep ti || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="ti"
+			test_ti_kernel_version
 		fi
+	fi
+}
+
+test_bone_rt_kernel_version () {
+	if [ "x${kernel}" = "x" ] ; then
+		major=$(uname -r | awk '{print $1}' | cut -d. -f1)
+		minor=$(uname -r | awk '{print $1}' | cut -d. -f2)
+
+		case "${major}.${minor}" in
+		4.1)
+			kernel="LTS41"
+			;;
+		4.4)
+			kernel="LTS44"
+			;;
+		4.9)
+			kernel="EXPERIMENTAL"
+#			kernel="LTS49"
+			;;
+		esac
+	fi
+}
+
+test_bone_kernel_version () {
+	if [ "x${kernel}" = "x" ] ; then
+		major=$(uname -r | awk '{print $1}' | cut -d. -f1)
+		minor=$(uname -r | awk '{print $1}' | cut -d. -f2)
+
+		case "${major}.${minor}" in
+		3.8)
+			kernel="STABLE"
+			;;
+		4.1)
+			kernel="LTS41"
+			;;
+		4.4)
+			kernel="LTS44"
+			;;
+		4.9)
+			kernel="EXPERIMENTAL"
+#			kernel="LTS49"
+			;;
+		*)
+			#aka STABLE, as 3.8.13 will always be considered STABLE
+			kernel="TESTING"
+			;;
+		esac
 	fi
 }
 
@@ -57,6 +129,7 @@ scan_bone_kernels () {
 		testvalue=$(echo ${current_kernel} | grep bone-rt || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="bone-rt"
+			test_bone_rt_kernel_version
 		fi
 	fi
 	if [ "x${SOC}" = "x" ] ; then
@@ -64,7 +137,31 @@ scan_bone_kernels () {
 		testvalue=$(echo ${current_kernel} | grep bone || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="omap-psp"
+			test_bone_kernel_version
 		fi
+	fi
+}
+
+test_armv7_kernel_version () {
+	if [ "x${kernel}" = "x" ] ; then
+		major=$(uname -r | awk '{print $1}' | cut -d. -f1)
+		minor=$(uname -r | awk '{print $1}' | cut -d. -f2)
+
+		case "${major}.${minor}" in
+		4.1)
+			kernel="LTS41"
+			;;
+		4.4)
+			kernel="LTS44"
+			;;
+		4.9)
+			kernel="EXPERIMENTAL"
+#			kernel="LTS49"
+			;;
+		*)
+			kernel="STABLE"
+			;;
+		esac
 	fi
 }
 
@@ -74,6 +171,7 @@ scan_armv7_kernels () {
 		testvalue=$(echo ${current_kernel} | grep lpae || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="armv7-lpae"
+			test_armv7_kernel_version
 		fi
 	fi
 	if [ "x${SOC}" = "x" ] ; then
@@ -81,6 +179,7 @@ scan_armv7_kernels () {
 		testvalue=$(echo ${current_kernel} | grep armv7-rt || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="armv7-rt"
+			test_armv7_kernel_version
 		fi
 	fi
 	if [ "x${SOC}" = "x" ] ; then
@@ -88,6 +187,7 @@ scan_armv7_kernels () {
 		testvalue=$(echo ${current_kernel} | grep armv7 || true)
 		if [ ! "x${testvalue}" = "x" ] ; then
 			SOC="armv7"
+			test_armv7_kernel_version
 		fi
 	fi
 }
@@ -97,13 +197,25 @@ get_device () {
 
 	if [ "x${SOC}" = "x" ] ; then
 		case "${machine}" in
-		TI_AM335x_BeagleBone|TI_AM335x_BeagleBone_Black|TI_AM335x_BeagleBone_Green)
+		Arrow_BeagleBone_Black_Industrial)
 			scan_ti_kernels
 			scan_bone_kernels
 			scan_armv7_kernels
 			es8="enabled"
 			;;
-		TI_AM5728_BeagleBoard-X15)
+		TI_AM335x_Beagle*)
+			scan_ti_kernels
+			scan_bone_kernels
+			scan_armv7_kernels
+			es8="enabled"
+			;;
+		SanCloud_BeagleBone_Enhanced)
+			scan_ti_kernels
+			scan_bone_kernels
+			scan_armv7_kernels
+			es8="enabled"
+			;;
+		TI_AM5728*)
 			scan_ti_kernels
 			scan_armv7_kernels
 			;;
@@ -119,15 +231,32 @@ get_device () {
 	fi
 
 	unset es8
-	unset sgx5430
+	unset sgxti335x
+	unset sgxjacinto6evm
+	unset rtl8723bu
+	unset ticmem
+	unset tidebugss
+	unset titemperature
 	unset kernel_headers
 	case "${machine}" in
-	TI_AM335x_BeagleBone|TI_AM335x_BeagleBone_Black|TI_AM335x_BeagleBone_Green)
+	Arrow_BeagleBone_Black_Industrial)
 		es8="enabled"
+		sgxti335x="enabled"
 		;;
-	TI_AM5728_BeagleBoard-X15)
-		sgx5430="enabled"
-		kernel_headers="enabled"
+	TI_AM335x_BeagleBone*)
+		es8="enabled"
+		sgxti335x="enabled"
+		;;
+	SanCloud_BeagleBone_Enhanced)
+		es8="enabled"
+		sgxti335x="enabled"
+		rtl8723bu="enabled"
+		;;
+	TI_AM5728*)
+		sgxjacinto6evm="enabled"
+		ticmem="enabled"
+		tidebugss="enabled"
+		titemperature="enabled"
 		;;
 	TI_OMAP5_uEVM_board)
 		kernel_headers="enabled"
@@ -179,12 +308,30 @@ latest_version_repo () {
 			echo "Kernel Options:"
 			cat /tmp/LATEST-${SOC}
 			echo "-----------------------------"
+			echo "Kernel version options:"
+			echo "-----------------------------"
+			echo "LTS314: --lts-3_14"
+			echo "LTS41: --lts-4_1"
+			echo "LTS44: --lts-4_4"
+			echo "LTS49: --lts-4_9"
+			echo "STABLE: --stable"
+			echo "TESTING: --testing"
+			echo "-----------------------------"
 
-			latest_kernel=$(cat /tmp/LATEST-${SOC} | grep ${kernel} | awk '{print $3}')
-			echo "info: you are running: [${current_kernel}], latest is: [${latest_kernel}] updating..."
-			if [ "x${latest_kernel}" = "x" ] ; then
+			if [ "x${kernel}" = "x" ] ; then
+				echo "Please pass one of the above kernel options to update_kernel.sh"
+				echo "-----------------------------"
 				exit
 			fi
+
+			latest_kernel=$(cat /tmp/LATEST-${SOC} | grep ${kernel} | awk '{print $3}')
+
+			if [ "x${latest_kernel}" = "x" ] ; then
+				echo "Please pass one of the above kernel options to update_kernel.sh"
+				echo "-----------------------------"
+				exit
+			fi
+			echo "info: you are running: [${current_kernel}], latest is: [${latest_kernel}] updating..."
 
 			if [ "x${current_kernel}" = "x${latest_kernel}" ] ; then
 				if [ "x${daily_cron}" = "xenabled" ] ; then
@@ -194,6 +341,7 @@ latest_version_repo () {
 			fi
 			apt-get update
 
+			unset flag_reinstall
 			pkg="linux-image-${latest_kernel}"
 			#is the package installed?
 			check_dpkg
@@ -207,7 +355,11 @@ latest_version_repo () {
 				apt-get install -y ${pkg}
 				update_uEnv_txt
 			elif [ "x${pkg}" = "x${apt_cache}" ] ; then
+				if [ "x${kernel_headers}" = "xenabled" ] ; then
+					pkg="${pkg} linux-headers-${latest_kernel}"
+				fi
 				echo "debug: reinstalling: [${pkg}]"
+				flag_reinstall=true
 				apt-get install -y ${pkg} --reinstall
 				update_uEnv_txt
 			else
@@ -228,7 +380,9 @@ latest_version () {
 		echo "info: checking archive"
 		wget --no-verbose ${mirror}/${dist}-${arch}/LATEST-${SOC}
 		if [ -f /tmp/LATEST-${SOC} ] ; then
+
 			latest_kernel=$(cat /tmp/LATEST-${SOC} | grep ${kernel} | awk '{print $3}')
+
 			echo "info: you are running: [${current_kernel}], latest is: [${latest_kernel}] updating..."
 			if [ "x${latest_kernel}" = "x" ] ; then
 				exit
@@ -310,6 +464,7 @@ specific_version_repo () {
 	latest_kernel=$(echo ${kernel_version})
 	apt-get update
 
+	unset flag_reinstall
 	pkg="linux-image-${latest_kernel}"
 	#is the package installed?
 	check_dpkg
@@ -322,6 +477,7 @@ specific_version_repo () {
 		apt-get install -y ${pkg}
 		update_uEnv_txt
 	elif [ "x${pkg}" = "x${apt_cache}" ] ; then
+		flag_reinstall=true
 		apt-get install -y ${pkg} --reinstall
 		update_uEnv_txt
 	else
@@ -339,37 +495,100 @@ third_party_final () {
 third_party () {
 	unset run_depmod_initramfs
 
+	apt_options="install -y"
+	if [ "x${flag_reinstall}" = xtrue ] ; then
+		apt_options="install -y --reinstall"
+	fi
+
 	case "${SOC}" in
 	omap-psp)
 		case "${kernel}" in
 		STABLE)
 			#3.8 only...
-			apt-get install -o Dpkg::Options::="--force-overwrite" -y mt7601u-modules-${latest_kernel} || true
+			apt-get ${apt_options} -o Dpkg::Options::="--force-overwrite" mt7601u-modules-${latest_kernel} || true
 			run_depmod_initramfs="enabled"
 			;;
-		LTS|TESTING|EXPERIMENTAL)
+		LTS41|LTS44|LTS49|TESTING|EXPERIMENTAL)
 			if [ "x${es8}" = "xenabled" ] ; then
-				apt-get install -y ti-sgx-es8-modules-${latest_kernel} || true
+				apt-get ${apt_options} ti-sgx-es8-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${rtl8723bu}" = "xenabled" ] ; then
+				apt-get ${apt_options} rtl8723bu-modules-${latest_kernel} || true
 				run_depmod_initramfs="enabled"
 			fi
 			;;
 		esac
 		;;
-	ti|ti-rt|ti-xenomai|ti-omap2plus)
+	ti-xenomai)
 		case "${kernel}" in
 		STABLE)
-			#3.14 only...
-			apt-get install -o Dpkg::Options::="--force-overwrite" -y mt7601u-modules-${latest_kernel} || true
+			#3.8 only...
+			apt-get ${apt_options} -o Dpkg::Options::="--force-overwrite" mt7601u-modules-${latest_kernel} || true
 			if [ "x${es8}" = "xenabled" ] ; then
-				apt-get install -y ti-sgx-es8-modules-${latest_kernel} || true
+				apt-get ${apt_options} ti-sgx-es8-modules-${latest_kernel} || true
 			fi
 			run_depmod_initramfs="enabled"
 			;;
-		TESTING)
-			if [ "x${sgx5430}" = "xenabled" ] ; then
-				apt-get install -y ti-sgx-5430-modules-${latest_kernel} || true
+		esac
+		;;
+	ti|ti-rt)
+		case "${kernel}" in
+		LTS314)
+			apt-get ${apt_options} mt7601u-modules-${latest_kernel} || true
+			run_depmod_initramfs="enabled"
+			if [ "x${rtl8723bu}" = "xenabled" ] ; then
+				apt-get ${apt_options} rtl8723bu-modules-${latest_kernel} || true
 				run_depmod_initramfs="enabled"
 			fi
+			;;
+		LTS41|LTS44)
+			if [ "x${rtl8723bu}" = "xenabled" ] ; then
+				apt-get install -y rtl8723bu-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${ticmem}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-cmem-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${tidebugss}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-debugss-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${titemperature}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-temperature-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${sgxti335x}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-sgx-ti335x-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${sgxjacinto6evm}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-sgx-jacinto6evm-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			;;
+		LTS49)
+#			if [ "x${ticmem}" = "xenabled" ] ; then
+#				apt-get ${apt_options} ti-cmem-modules-${latest_kernel} || true
+#				run_depmod_initramfs="enabled"
+#			fi
+			if [ "x${tidebugss}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-debugss-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+			if [ "x${titemperature}" = "xenabled" ] ; then
+				apt-get ${apt_options} ti-temperature-modules-${latest_kernel} || true
+				run_depmod_initramfs="enabled"
+			fi
+#			if [ "x${sgxti335x}" = "xenabled" ] ; then
+#				apt-get ${apt_options} ti-sgx-ti335x-modules-${latest_kernel} || true
+#				run_depmod_initramfs="enabled"
+#			fi
+#			if [ "x${sgxjacinto6evm}" = "xenabled" ] ; then
+#				apt-get ${apt_options} ti-sgx-jacinto6evm-modules-${latest_kernel} || true
+#				run_depmod_initramfs="enabled"
+#			fi
 			;;
 		esac
 		;;
@@ -385,13 +604,28 @@ checkparm () {
 	fi
 }
 
-if [ ! -f /usr/bin/lsb_release ] ; then
-	echo "install lsb-release"
-	echo "sudo apt-get install lsb-release"
-	exit
-fi
+get_dist=$(cat /etc/apt/sources.list | grep -v deb-src | grep armhf | grep repos.rcn-ee.com | head -1 | awk '{print $4}' || true)
+case "${get_dist}" in
+wheezy|jessie|stretch|sid)
+	dist="${get_dist}"
+	;;
+trusty|utopic|vivid|wily|xenial|yakkety)
+	dist="${get_dist}"
+	;;
+*)
+	dist=""
+	;;
+esac
 
-dist=$(lsb_release -cs | sed 's/\//_/g')
+if [ "x${dist}" = "x" ] ; then
+	if [ ! -f /usr/bin/lsb_release ] ; then
+		echo "install lsb-release"
+		echo "sudo apt-get install lsb-release"
+		exit
+	fi
+
+	dist=$(lsb_release -cs | sed 's/\//_/g')
+fi
 arch=$(dpkg --print-architecture)
 current_kernel=$(uname -r)
 
@@ -409,10 +643,11 @@ if [ "x${dist}" = "xn_a" ] ; then
 	fi
 fi
 
-kernel="STABLE"
+unset kernel
 mirror="https://rcn-ee.com/repos/latest"
 unset kernel_version
 unset daily_cron
+unset old_rootfs
 # parse commandline options
 while [ ! -z "$1" ] ; do
 	case $1 in
@@ -423,8 +658,17 @@ while [ ! -z "$1" ] ; do
 	--daily-cron)
 		daily_cron="enabled"
 		;;
-	--lts-kernel|--lts)
-		kernel="LTS"
+	--lts-3_14-kernel|--lts-3_14)
+		kernel="LTS314"
+		;;
+	--lts-kernel|--lts|--lts-4_1-kernel|--lts-4_1)
+		kernel="LTS41"
+		;;
+	--lts-4_4-kernel|--lts-4_4)
+		kernel="LTS44"
+		;;
+	--lts-4_9-kernel|--lts-4_9)
+		kernel="LTS49"
 		;;
 	--stable-kernel|--stable)
 		kernel="STABLE"
@@ -441,6 +685,9 @@ while [ ! -z "$1" ] ; do
 	--armv7-rt-channel)
 		SOC="armv7-rt"
 		;;
+	--armv7-lpae-channel)
+		SOC="armv7-lpae"
+		;;
 	--bone-kernel|--bone-channel)
 		SOC="omap-psp"
 		;;
@@ -451,12 +698,20 @@ while [ ! -z "$1" ] ; do
 		SOC="xenomai"
 		kernel="STABLE"
 		;;
+	--imxv6v7-channel)
+		SOC="imxv6v7"
+		kernel="STABLE"
+		;;
 	--multiv7-channel)
 		SOC="multiv7"
 		kernel="STABLE"
 		;;
-	--omap2plus-channel)
+	--omap2plus-channel|--ti-omap2plus-channel)
 		SOC="omap2plus"
+		kernel="STABLE"
+		;;
+	--tegra-channel)
+		SOC="tegra"
 		kernel="STABLE"
 		;;
 	--ti-kernel|--ti-channel)
@@ -468,9 +723,8 @@ while [ ! -z "$1" ] ; do
 	--ti-xenomai-kernel|--ti-xenomai-channel)
 		SOC="ti-xenomai"
 		;;
-	--ti-omap2plus-channel)
-		SOC="ti-omap2plus"
-		kernel="TESTING"
+	--pre-fall-2014-rootfs)
+		old_rootfs="enable"
 		;;
 	esac
 	shift
@@ -485,7 +739,7 @@ if [ ! -f /lib/systemd/system/systemd-timesyncd.service ] ; then
 fi
 
 test_rcnee=$(cat /etc/apt/sources.list | grep repos.rcn-ee || true)
-if [ ! "x${test_rcnee}" = "x" ] ; then
+if [ ! "x${test_rcnee}" = "x" ] && [ "x${old_rootfs}" = "x" ] ; then
 	net_rcnee=$(cat /etc/apt/sources.list | grep repos.rcn-ee.net || true)
 	if [ ! "x${net_rcnee}" = "x" ] ; then
 		sed -i -e 's:repos.rcn-ee.net:repos.rcn-ee.com:g' /etc/apt/sources.list

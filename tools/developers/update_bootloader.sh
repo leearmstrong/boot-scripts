@@ -1,6 +1,6 @@
 #!/bin/sh -e
 #
-# Copyright (c) 2014-2015 Robert Nelson <robertcnelson@gmail.com>
+# Copyright (c) 2014-2016 Robert Nelson <robertcnelson@gmail.com>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -33,7 +33,7 @@ dl_bootloader () {
 	echo ""
 	echo "Downloading Device's Bootloader"
 	echo "-----------------------------"
-	conf_bl_http="http://rcn-ee.com/repos/bootloader/latest"
+	conf_bl_http="https://rcn-ee.com/repos/bootloader/latest"
 	conf_bl_listfile="bootloader-ng"
 	minimal_boot="1"
 
@@ -86,6 +86,11 @@ is_imx () {
 is_omap () {
 	spl_name="MLO"
 	boot_name="u-boot.img"
+}
+
+is_spl_uboot () {
+	spl_name="SPL"
+	boot_name="BOOT"
 }
 
 fatfs_boot () {
@@ -152,7 +157,7 @@ dd_uboot_boot () {
 
 		if [ -f ${TEMPDIR}/dl/${UBOOT} ] ; then
 			echo "dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}"
-			sudo dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}
+			dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}
 			sync
 			flashed=done
 		fi
@@ -167,41 +172,48 @@ dd_spl_uboot_boot () {
 	echo "u-boot-mmc-spl.bin: [${SPL}]"
 	echo "u-boot.bin: [${UBOOT}]"
 	echo "for: [${conf_board}]"
+
+	echo "-----------------------------"
+
+	if [ "x${dd_spl_uboot_seek}" = "x" ] ; then
+		echo "dd_spl_uboot_seek not found in ${DRIVE}/SOC.sh halting"
+		echo "-----------------------------"
+		exit
+	fi
+
+	if [ "x${dd_spl_uboot_bs}" = "x" ] ; then
+		echo "dd_spl_uboot_bs not found in ${DRIVE}/SOC.sh halting"
+		echo "-----------------------------"
+		exit
+	fi
+
+	if [ "x${dd_uboot_seek}" = "x" ] ; then
+		echo "dd_uboot_seek not found in ${DRIVE}/SOC.sh halting"
+		echo "-----------------------------"
+		exit
+	fi
+
+	if [ "x${dd_uboot_bs}" = "x" ] ; then
+		echo "dd_uboot_bs not found in ${DRIVE}/SOC.sh halting"
+		echo "-----------------------------"
+		exit
+	fi
+
+	if [ -f ${TEMPDIR}/dl/${UBOOT} ] ; then
+		echo "log: dd if=${TEMPDIR}/dl/${SPL} of=${target} seek=${dd_spl_uboot_seek} bs=${dd_spl_uboot_bs}"
+		echo "log: dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}"
+	fi
+
 	echo ""
 	echo -n "Are you 100% sure, on selecting [${conf_board}] (y/n)? "
 	read response
 	if [ "x${response}" = "xy" ] ; then
-		echo "-----------------------------"
-
-		if [ "x${dd_spl_uboot_seek}" = "x" ] ; then
-			echo "dd_spl_uboot_seek not found in ${DRIVE}/SOC.sh halting"
-			echo "-----------------------------"
-			exit
-		fi
-
-		if [ "x${dd_spl_uboot_bs}" = "x" ] ; then
-			echo "dd_spl_uboot_bs not found in ${DRIVE}/SOC.sh halting"
-			echo "-----------------------------"
-			exit
-		fi
-
-		if [ "x${dd_uboot_seek}" = "x" ] ; then
-			echo "dd_uboot_seek not found in ${DRIVE}/SOC.sh halting"
-			echo "-----------------------------"
-			exit
-		fi
-
-		if [ "x${dd_uboot_bs}" = "x" ] ; then
-			echo "dd_uboot_bs not found in ${DRIVE}/SOC.sh halting"
-			echo "-----------------------------"
-			exit
-		fi
 
 		if [ -f ${TEMPDIR}/dl/${UBOOT} ] ; then
 			echo "log: dd if=${TEMPDIR}/dl/${SPL} of=${target} seek=${dd_spl_uboot_seek} bs=${dd_spl_uboot_bs}"
-			sudo dd if=${TEMPDIR}/dl/${SPL} of=${target} seek=${dd_spl_uboot_seek} bs=${dd_spl_uboot_bs}
+			dd if=${TEMPDIR}/dl/${SPL} of=${target} seek=${dd_spl_uboot_seek} bs=${dd_spl_uboot_bs}
 			echo "log: dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}"
-			sudo dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}
+			dd if=${TEMPDIR}/dl/${UBOOT} of=${target} seek=${dd_uboot_seek} bs=${dd_uboot_bs}
 			sync
 			flashed=done
 		fi
@@ -216,9 +228,18 @@ get_device () {
 	case "${machine}" in
 	TI_OMAP5_uEVM_board)
 		target="/dev/mmcblk1"
+		if [ ! -b ${target} ] ; then
+			target="/dev/mmcblk0"
+		fi
 		;;
 	*)
 		target="/dev/mmcblk0"
+		if [ ! -b ${target} ] ; then
+			target="/dev/mmcblk1"
+			if [ ! -b ${target} ] ; then
+				target="/dev/mmcblk2"
+			fi
+		fi
 		;;
 	esac
 }
@@ -242,6 +263,7 @@ got_board () {
 		dd_uboot_boot
 		;;
 	dd_spl_uboot_boot)
+		is_spl_uboot
 		dl_bootloader
 		dd_spl_uboot_boot
 		;;
@@ -339,7 +361,7 @@ check_soc_sh () {
 	if [ $(uname -m) != "armv7l" ] ; then
 		sync
 		sync
-		sudo umount ${DRIVE}/ || true
+		umount ${DRIVE}/ || true
 	fi
 	echo "Bootloader Recovery Complete"
 }

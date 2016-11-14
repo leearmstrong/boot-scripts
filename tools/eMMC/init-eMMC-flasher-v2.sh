@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright (c) 2013-2015 Robert Nelson <robertcnelson@gmail.com>
+# Copyright (c) 2013-2016 Robert Nelson <robertcnelson@gmail.com>
 # Portions copyright (c) 2014 Charles Steinkuehler <charles@steinkuehler.net>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -24,7 +24,7 @@
 #This script assumes, these packages are installed, as network may not be setup
 #dosfstools initramfs-tools rsync u-boot-tools
 
-version_message="1.001: 2015-07-21: Better then never, version #..."
+version_message="1.20161005: sfdisk: actually calculate the start of 2nd/3rd partitions..."
 
 if ! id | grep -q root; then
 	echo "must be run as root"
@@ -193,7 +193,7 @@ format_boot () {
 }
 
 format_root () {
-	mkfs.ext4 ${destination}p2 -L rootfs
+	mkfs.ext4 -c ${destination}p2 -L rootfs
 	flush_cache
 }
 
@@ -209,15 +209,16 @@ partition_drive () {
 	if [ -f /boot/SOC.sh ] ; then
 		. /boot/SOC.sh
 	fi
-	conf_boot_startmb=${conf_boot_startmb:-"1"}
+	conf_boot_startmb=${conf_boot_startmb:-"4"}
 	conf_boot_endmb=${conf_boot_endmb:-"96"}
 	sfdisk_fstype=${sfdisk_fstype:-"0xE"}
+	sfdisk_rootfs_startmb=$(($conf_boot_startmb + $conf_boot_endmb))
 
 	echo "Formatting: ${destination}"
 	#96Mb fat formatted boot partition
 	LC_ALL=C sfdisk --force --in-order --Linux --unit M "${destination}" <<-__EOF__
 		${conf_boot_startmb},${conf_boot_endmb},${sfdisk_fstype},*
-		,,,-
+		${sfdisk_rootfs_startmb},,,-
 	__EOF__
 
 	flush_cache
@@ -324,7 +325,7 @@ copy_rootfs () {
 		echo "eMMC has been flashed, please remove power and microSD card"
 		echo ""
 		echo "-----------------------------"
-
+		flush_cache
 		halt -f
 	fi
 }
